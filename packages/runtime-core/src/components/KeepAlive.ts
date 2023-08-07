@@ -52,6 +52,8 @@ export interface KeepAliveProps {
   include?: MatchPattern
   exclude?: MatchPattern
   max?: number | string
+  // 是否为匹配组件的实力 key 模式
+  isKey?: boolean
 }
 
 type CacheKey = string | number | symbol | ConcreteComponent
@@ -84,7 +86,8 @@ const KeepAliveImpl: ComponentOptions = {
   props: {
     include: [String, RegExp, Array],
     exclude: [String, RegExp, Array],
-    max: [String, Number]
+    max: [String, Number],
+    isKey: [Boolean]
   },
 
   setup(props: KeepAliveProps, { slots }: SetupContext) {
@@ -106,6 +109,7 @@ const KeepAliveImpl: ComponentOptions = {
     }
 
     const cache: Cache = new Map()
+    const unCache: Cache = new Map()
     const keys: Keys = new Set()
     let current: VNode | null = null
 
@@ -185,24 +189,43 @@ const KeepAliveImpl: ComponentOptions = {
 
     function pruneCache(filter?: (name: string) => boolean) {
       cache.forEach((vnode, key) => {
-        const name = getComponentName(vnode.type as ConcreteComponent)
+        const name = props.isKey
+          ? (vnode.key as string)
+          : getComponentName(vnode.type as ConcreteComponent)
         if (name && (!filter || !filter(name))) {
           pruneCacheEntry(key)
         }
       })
     }
 
-    function pruneCacheEntry(key: CacheKey) {
-      const cached = cache.get(key) as VNode
+    function loopPruneCacheEntry(key: CacheKey, count: number = 0) {
+      // 避免死循环，最多循环 30 次
+      if (count > 30) {
+        return
+      }
+      if (unCache.has(key)) {
+        setTimeout(() => {
+          pruneCacheEntry(key, count)
+        }, 100)
+      }
+    }
+
+    function pruneCacheEntry(key: CacheKey, count?: number) {
+      const cached = (cache.get(key) || unCache.get(key)) as VNode
       if (!current || !isSameVNodeType(cached, current)) {
+        unCache.delete(key)
         unmount(cached)
       } else if (current) {
         // current active instance should no longer be kept-alive.
         // we can't unmount it now but it might be later, so reset its flag now.
         resetShapeFlag(current)
+        unCache.set(key, current)
       }
-      cache.delete(key)
-      keys.delete(key)
+      if (cache.has(key)) {
+        cache.delete(key)
+        keys.delete(key)
+      }
+      loopPruneCacheEntry(key, count)
     }
 
     // prune cache on include/exclude prop change
@@ -272,11 +295,13 @@ const KeepAliveImpl: ComponentOptions = {
 
       // for async components, name check should be based in its loaded
       // inner component if available
-      const name = getComponentName(
-        isAsyncWrapper(vnode)
-          ? (vnode.type as ComponentOptions).__asyncResolved || {}
-          : comp
-      )
+      const name = props.isKey
+        ? (vnode.key as string)
+        : getComponentName(
+            isAsyncWrapper(vnode)
+              ? (vnode.type as ComponentOptions).__asyncResolved || {}
+              : comp
+          )
 
       const { include, exclude, max } = props
 
