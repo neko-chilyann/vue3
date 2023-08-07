@@ -98,6 +98,10 @@ export { Teleport, type TeleportProps } from './components/Teleport'
 export { Suspense, type SuspenseProps } from './components/Suspense'
 export { KeepAlive, type KeepAliveProps } from './components/KeepAlive'
 export {
+  IBizKeepAlive,
+  type IBizKeepAliveProps
+} from './components/IBizKeepAlive'
+export {
   BaseTransition,
   BaseTransitionPropsValidators,
   type BaseTransitionProps
