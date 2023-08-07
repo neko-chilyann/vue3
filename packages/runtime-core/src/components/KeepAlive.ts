@@ -4,7 +4,6 @@ import {
   SetupContext,
   ComponentInternalInstance,
   currentInstance,
-  getComponentName,
   ComponentOptions
 } from '../component'
 import {
@@ -42,7 +41,6 @@ import {
 import { setTransitionHooks } from './BaseTransition'
 import { ComponentRenderContext } from '../componentPublicInstance'
 import { devtoolsComponentAdded } from '../devtools'
-import { isAsyncWrapper } from '../apiAsyncComponent'
 import { isSuspense } from './Suspense'
 import { LifecycleHooks } from '../enums'
 
@@ -106,6 +104,7 @@ const KeepAliveImpl: ComponentOptions = {
     }
 
     const cache: Cache = new Map()
+    const unmountCache: Cache = new Map()
     const keys: Keys = new Set()
     let current: VNode | null = null
 
@@ -185,24 +184,44 @@ const KeepAliveImpl: ComponentOptions = {
 
     function pruneCache(filter?: (name: string) => boolean) {
       cache.forEach((vnode, key) => {
-        const name = getComponentName(vnode.type as ConcreteComponent)
+        const name = vnode.key as string
         if (name && (!filter || !filter(name))) {
           pruneCacheEntry(key)
         }
       })
     }
 
+    /**
+     * 递归调用销毁，避免在销毁时界面呈现未销毁导致无法销毁的问题
+     *
+     * @author chitanda
+     * @date 2023-08-07 21:08:04
+     * @param {CacheKey} key
+     */
+    function loopPruneCacheEntry(key: CacheKey): void {
+      if (unmountCache.has(key)) {
+        setTimeout(() => {
+          pruneCacheEntry(key)
+        }, 100)
+      }
+    }
+
     function pruneCacheEntry(key: CacheKey) {
-      const cached = cache.get(key) as VNode
+      const cached = (cache.get(key) || unmountCache.get(key)) as VNode
       if (!current || !isSameVNodeType(cached, current)) {
+        unmountCache.delete(key)
         unmount(cached)
       } else if (current) {
         // current active instance should no longer be kept-alive.
         // we can't unmount it now but it might be later, so reset its flag now.
         resetShapeFlag(current)
+        unmountCache.set(key, current)
       }
-      cache.delete(key)
-      keys.delete(key)
+      if (cache.has(key)) {
+        cache.delete(key)
+        keys.delete(key)
+      }
+      loopPruneCacheEntry(key)
     }
 
     // prune cache on include/exclude prop change
@@ -272,11 +291,7 @@ const KeepAliveImpl: ComponentOptions = {
 
       // for async components, name check should be based in its loaded
       // inner component if available
-      const name = getComponentName(
-        isAsyncWrapper(vnode)
-          ? (vnode.type as ComponentOptions).__asyncResolved || {}
-          : comp
-      )
+      const name = vnode.key as string
 
       const { include, exclude, max } = props
 
